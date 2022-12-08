@@ -1,6 +1,10 @@
 local ffi = require("ffi")
 
 
+local LIBRARY_NAME = ffi.os == "OSX" and "libatc_router.dylib" or
+                                         "libatc_router.so"
+
+
 -- generated from "cbindgen -l c", do not edit manually
 ffi.cdef([[
 typedef enum Type {
@@ -128,7 +132,7 @@ do
 end  -- do
 
 
-local clib, tried_paths = load_shared_lib("libatc_router.so")
+local clib, tried_paths = load_shared_lib(LIBRARY_NAME)
 if not clib then
     error("could not load libatc_router.so from the following paths:\n" ..
           table.concat(tried_paths, "\n"), 2)

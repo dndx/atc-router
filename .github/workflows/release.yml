@@ -1,36 +1,14 @@
----
-name: Release
-
-on:  # yamllint disable-line rule:truthy
-  pull_request:
+name: Build Releases
+on:
   push:
-    branches:
-    - main
+    tags:
+      - "*.*.*"
 
 env:
-  DESTDIR: /tmp/build
-  LUA_LIB_DIR: /usr/local/openresty/lualib
-  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      published: ${{ steps.release.outputs.published }}
-      release-git-tag: ${{ steps.release.outputs.release-git-tag }}
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-    - name: Release
-      id: release
-      uses: ahmadnassri/action-semantic-release@v2.1.10
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  artifacts:
-    needs: release
-    name: Create Release Artifacts
+  build-cross:
     runs-on: ubuntu-latest
     env:
       RUST_BACKTRACE: full
@@ -38,8 +16,9 @@ jobs:
       matrix:
         target:
           - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
           - x86_64-unknown-linux-musl
+          - x86_64-unknown-linux-gnu:centos # for CentOS 7 which uses Glibc 2.17
+          - aarch64-unknown-linux-gnu
           - aarch64-unknown-linux-musl
 
     steps:
@@ -49,23 +28,28 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
           override: true
+        if: ${{ matrix.target != 'x86_64-unknown-linux-gnu:centos' }}
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
+          override: true
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu:centos' }}
+      - name: use CentOS 7 special base image if necessary
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu:centos' }}
+        run: echo "CROSS_CONFIG=Cross.centos7.toml" >> $GITHUB_ENV
       - uses: actions-rs/cargo@v1
-        env:
-          RUSTFLAGS: '-C target-feature=-crt-static' # Required for aarch64-unknown-linux-musl
         with:
           use-cross: true
           command: build
           args: --release --target ${{ matrix.target }}
-      - name: Install, Compress, and rename artifacts
-        env:
-          DESTDIR: ${{ env.DESTDIR }}
+      - name: Rename artifacts and compress
         run: |
-          make install
-          tar -C /tmp/build/ -czvf ${{ matrix.target }}.tar.gz .
-      - name: Add Release Artifacts to the Github Release
-        if: ${{ needs.release.outputs.published == 'true' }}
+          cd target/${{ matrix.target }}/release
+          zip atc_router_${{ matrix.target }}-cdylib.zip libatc_router.so
+          zip atc_router_${{ matrix.target }}-staticlib.zip libatc_router.a
+      - name: Upload Github Assets
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ needs.release.outputs.release-git-tag }}
-          files: ${{ matrix.target }}.tar.gz
-
+          files: target/${{ matrix.target }}/release/*.zip
+          prerelease: ${{ contains(github.ref, '-') }}
